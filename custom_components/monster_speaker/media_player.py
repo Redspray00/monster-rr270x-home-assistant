@@ -9,22 +9,30 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import MonsterSpeakerConfigEntry
 from .const import DOMAIN
 from .coordinator import MonsterSpeakerCoordinator
 
+_BASE_FEATURES = (
+    MediaPlayerEntityFeature.TURN_ON
+    | MediaPlayerEntityFeature.TURN_OFF
+    | MediaPlayerEntityFeature.VOLUME_SET
+)
+
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
+    hass: HomeAssistant,
+    entry: MonsterSpeakerConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> None:
-    coordinator: MonsterSpeakerCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([MonsterSpeakerMediaPlayer(coordinator, entry)])
+    """Set up the speaker media player."""
+    async_add_entities([MonsterSpeakerMediaPlayer(entry.runtime_data, entry)])
 
 
 class MonsterSpeakerMediaPlayer(
@@ -34,15 +42,15 @@ class MonsterSpeakerMediaPlayer(
 
     _attr_has_entity_name = True
     _attr_name = "Speaker"
-    _attr_supported_features = (
-        MediaPlayerEntityFeature.TURN_ON
-        | MediaPlayerEntityFeature.TURN_OFF
-        | MediaPlayerEntityFeature.VOLUME_SET
-        | MediaPlayerEntityFeature.VOLUME_STEP
-    )
+    # The speaker never reports power or volume back, so state is optimistic.
+    _attr_assumed_state = True
     _attr_should_poll = False
+    # Diagnostic detail; keep it out of the recorder database.
+    _unrecorded_attributes = frozenset({"gatt_characteristics"})
 
-    def __init__(self, coordinator: MonsterSpeakerCoordinator, entry: ConfigEntry) -> None:
+    def __init__(
+        self, coordinator: MonsterSpeakerCoordinator, entry: MonsterSpeakerConfigEntry
+    ) -> None:
         super().__init__(coordinator)
         address = entry.data[CONF_ADDRESS]
         self._attr_unique_id = address.lower()
@@ -57,6 +65,13 @@ class MonsterSpeakerMediaPlayer(
     @property
     def available(self) -> bool:
         return bool(self.coordinator.data.get("connected"))
+
+    @property
+    def supported_features(self) -> MediaPlayerEntityFeature:
+        """Offer volume steps only once a level is known, to avoid loud jumps."""
+        if self.coordinator.data.get("volume") is None:
+            return _BASE_FEATURES
+        return _BASE_FEATURES | MediaPlayerEntityFeature.VOLUME_STEP
 
     @property
     def state(self) -> MediaPlayerState | None:

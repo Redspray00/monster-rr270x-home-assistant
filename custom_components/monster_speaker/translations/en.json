@@ -5,7 +5,9 @@
       "user": {
         "title": "Add Monster speaker",
         "description": "Pick a speaker Home Assistant can hear, or enter its Bluetooth MAC address (for example 00:11:22:33:44:55). Close the Monster app first so the speaker is free to connect.",
-        "data": { "address": "Speaker" }
+        "data": {
+          "address": "Speaker"
+        }
       },
       "bluetooth_confirm": {
         "title": "Add Monster speaker",
@@ -13,11 +15,11 @@
       }
     },
     "error": {
-      "invalid_address": "Enter a MAC address like 00:11:22:33:44:55."
+      "invalid_address": "Enter a MAC address like 00:11:22:33:44:55.",
+      "device_not_seen": "Home Assistant has not seen a connectable device at this address yet. Make sure the speaker is on and the Monster app is closed."
     },
     "abort": {
       "already_configured": "This speaker is already configured.",
-      "not_supported": "This device is not a supported Monster speaker.",
       "unsupported_device": "This device is not a supported Monster speaker."
     }
   }

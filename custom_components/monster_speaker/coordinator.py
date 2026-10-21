@@ -18,9 +18,17 @@ from homeassistant.components.bluetooth import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .const import DOMAIN, POWER_OFF_COMMAND, POWER_ON_COMMAND, POWER_UUID, VOLUME_UUID
+from .const import (
+    DOMAIN,
+    MAX_VOLUME_STEP,
+    POWER_OFF_COMMAND,
+    POWER_ON_COMMAND,
+    POWER_UUID,
+    VOLUME_UUID,
+)
 
 _LOGGER = logging.getLogger(__name__)
 _RECONNECT_DELAY = 5
@@ -125,24 +133,33 @@ class MonsterSpeakerCoordinator(DataUpdateCoordinator[dict[str, object]]):
 
     async def async_set_volume(self, volume: float) -> None:
         """Set volume using the app-observed 0-32 protocol scale."""
-        step = max(0, min(32, round(volume * 32)))
+        step = max(0, min(MAX_VOLUME_STEP, round(volume * MAX_VOLUME_STEP)))
         await self.async_command(VOLUME_UUID, bytes((step, 0, 0)))
-        self.data["volume"] = step / 32
+        self.data["volume"] = step / MAX_VOLUME_STEP
         self.async_set_updated_data(self.data)
 
     async def async_volume_step(self, up: bool) -> None:
-        """Move volume one protocol step (1/32) up or down."""
+        """Move volume one protocol step (1/32) up or down.
+
+        The speaker does not report its volume, so stepping is only offered
+        once a level has been set from Home Assistant. Guessing a starting
+        level could cause a sudden loud jump.
+        """
         current = self.data.get("volume")
-        step = round(float(current) * 32) if current is not None else 16
-        step = max(0, min(32, step + (1 if up else -1)))
-        await self.async_set_volume(step / 32)
+        if current is None:
+            raise HomeAssistantError(
+                "Set a volume level first; the speaker does not report its current volume"
+            )
+        step = round(float(current) * MAX_VOLUME_STEP)
+        step = max(0, min(MAX_VOLUME_STEP, step + (1 if up else -1)))
+        await self.async_set_volume(step / MAX_VOLUME_STEP)
 
     async def _async_connection_loop(self) -> None:
         """Connect when available and reconnect after peripheral disconnects."""
         while not self._stop.is_set():
-            device = self._ble_device or bluetooth.async_ble_device_from_address(
+            device = bluetooth.async_ble_device_from_address(
                 self.hass, self.address, connectable=True
-            )
+            ) or self._ble_device
             if device is None:
                 _LOGGER.debug(
                     "No connectable advertisement from %s yet; waiting", self.address
@@ -179,8 +196,12 @@ class MonsterSpeakerCoordinator(DataUpdateCoordinator[dict[str, object]]):
                 raise
             except (BleakError, OSError, TimeoutError) as err:
                 _LOGGER.debug("BLE connection to %s failed: %s", self.address, err)
+                # Drop the cached device so the next attempt waits for a fresh
+                # advertisement instead of hammering a device that is gone.
+                self._ble_device = None
             except Exception:
                 _LOGGER.exception("Unexpected Monster speaker connection error")
+                self._ble_device = None
             finally:
                 self.data["connected"] = False
                 self.async_set_updated_data(self.data)

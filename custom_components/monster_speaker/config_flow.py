@@ -17,6 +17,18 @@ from .const import DOMAIN, SERVICE_UUID
 _NAME_PREFIX = "RR270"
 
 
+def _normalize_address(value: str) -> str:
+    """Validate and normalize a Bluetooth MAC address, raising ValueError if invalid."""
+    address = value.strip().replace("-", ":").upper()
+    parts = address.split(":")
+    if len(parts) != 6 or any(
+        len(part) != 2 or any(character not in "0123456789ABCDEF" for character in part)
+        for part in parts
+    ):
+        raise ValueError("invalid Bluetooth address")
+    return format_mac(address)
+
+
 def _clean_name(name: str | None) -> str:
     return (name or "").replace("\x00", "").strip() or "Monster Speaker"
 
@@ -68,19 +80,26 @@ class MonsterSpeakerConfigFlow(ConfigFlow, domain=DOMAIN):
         """Pick a speaker HA currently hears, or enter its MAC address."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            raw = user_input[CONF_ADDRESS].strip()
             try:
-                address = format_mac(raw)
-            except Exception:  # noqa: BLE001
-                address = raw.lower()
-            if len(address) != 17:
+                address = _normalize_address(user_input[CONF_ADDRESS])
+            except ValueError:
                 errors[CONF_ADDRESS] = "invalid_address"
             else:
                 await self.async_set_unique_id(address)
                 self._abort_if_unique_id_configured()
-                self._address = address
-                self._name = self._discovered.get(address, "Monster Speaker").split(" (")[0]
-                return self._create_entry()
+                if (
+                    bluetooth.async_ble_device_from_address(
+                        self.hass, address.upper(), connectable=True
+                    )
+                    is None
+                ):
+                    errors[CONF_ADDRESS] = "device_not_seen"
+                else:
+                    self._address = address
+                    self._name = self._discovered.get(
+                        address, "Monster Speaker"
+                    ).split(" (")[0]
+                    return self._create_entry()
 
         configured = self._async_current_ids(include_ignore=False)
         self._discovered = {
